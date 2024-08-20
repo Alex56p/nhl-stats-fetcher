@@ -1,0 +1,20 @@
+Initialization:
+- Add pool table and backfill from past 2 years
+- Add pool roaster table
+- Add players and teams logo url
+- Add roaster table
+
+Automatizations:
+- Script to update games
+- Script to update gamelogs
+- Script to update players
+- Script to reset players stats every season
+- Script to update team roaster
+- Script to update pool roaster
+- docker-compose file
+- kustomize deployment
+
+Dashboards:
+- Current players & teams ranking over time
+- Pool stats for season, day, week over time
+- Game Center with yesterday's games, today's games with stats linked with pool
