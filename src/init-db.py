@@ -1,5 +1,5 @@
-
 import os
+import requests
 import psycopg2
 import json
 from nhlpy import NHLClient
@@ -16,7 +16,8 @@ def generate_db():
             fullName VARCHAR(255),
             commonName VARCHAR(255),
             placeName VARCHAR(255),
-            abbrev VARCHAR(10) UNIQUE
+            abbrev VARCHAR(10) UNIQUE,
+            logo VARCHAR(1000)
         )
         ''',
         '''
@@ -45,6 +46,11 @@ def generate_db():
             shots INTEGER,
             teamAbbrev VARCHAR(10),
             timeOnIcePerGame NUMERIC,
+            headshot VARCHAR(1000),
+            age INTEGER,
+            height NUMERIC,
+            weight NUMERIC,
+            birthCountry VARCHAR(100),
             
             FOREIGN KEY (teamAbbrev)
                 REFERENCES teams (abbrev)
@@ -97,7 +103,7 @@ def generate_db():
         )''',
         '''
         CREATE TABLE gamelogs (
-            gameLogsId INTEGER GENERATED ALWAYS AS IDENTITY,
+            gameLogsId VARCHAR(255) PRIMARY KEY,
             gameId VARCHAR(255),
             playerId VARCHAR(255),
             teamAbbrev VARCHAR(10),
@@ -134,7 +140,7 @@ def generate_db():
         )''',
         '''
         CREATE TABLE goalerGameLogs(
-            gameLogsId INTEGER GENERATED ALWAYS AS IDENTITY,
+            gameLogsId VARCHAR(255) PRIMARY KEY,
             gameId VARCHAR(255),
             playerId VARCHAR(255),
             teamAbbrev VARCHAR(3),
@@ -385,7 +391,8 @@ def insertGameLogs(start_season, end_season):
                 index = 0
                 for player in players:
                     for i in range(start_season, end_season):
-                        insert_sql = ''' INSERT INTO gamelogs(                                
+                        insert_sql = ''' INSERT INTO gamelogs(
+                                            gameLogsId                                
                                             gameId, 
                                             playerId, 
                                             teamAbbrev, 
@@ -407,7 +414,7 @@ def insertGameLogs(start_season, end_season):
                                             pim, 
                                             toi, 
                                             gameType
-                                        ) values(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) 
+                                        ) values(%s, %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) 
                                         RETURNING *
                                     '''
                         season = str(i) + str(i + 1)
@@ -422,6 +429,7 @@ def insertGameLogs(start_season, end_season):
                                     cur.execute(sql, (str(player[0]), str(game_log['gameId'])))
                                     if(cur.fetchone() is None):
                                         game_logs_db.append((
+                                            game_log['gameId'] + player[0],
                                             game_log['gameId'],
                                             player[0],
                                             game_log['teamAbbrev'],
@@ -553,7 +561,8 @@ def insertGoalerGameLogs(start_season, end_season):
                 index = 0
                 for goaler in goalers:
                     for i in range(start_season, end_season):
-                        insert_sql = ''' INSERT INTO goalerGamelogs(                                
+                        insert_sql = ''' INSERT INTO goalerGamelogs(     
+                                            gameLogsId,                           
                                             gameId,
                                             playerId,
                                             teamAbbrev,
@@ -571,7 +580,7 @@ def insertGoalerGameLogs(start_season, end_season):
                                             pim,
                                             toi,
                                             gameType
-                                        ) values(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) 
+                                        ) values(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) 
                                         RETURNING *
                                     '''
                         season = str(i) + str(i + 1)
@@ -586,6 +595,7 @@ def insertGoalerGameLogs(start_season, end_season):
                                     cur.execute(sql, (str(goaler[0]), str(game_log['gameId'])))
                                     if(cur.fetchone() is None):
                                         game_logs_db.append((
+                                            game_log['gameId'] + goaler[0],
                                             game_log['gameId'],
                                             goaler[0],
                                             game_log['teamAbbrev'],
@@ -619,12 +629,92 @@ def insertGoalerGameLogs(start_season, end_season):
                     index += 1
     except (psycopg2.DatabaseError, Exception) as error:
         traceback.print_exc()
-                
+   
+def insertPlayersHeadhots():
+    try:
+        with psycopg2.connect(database=os.environ.get("DATABASE_URL", 'nhl-stats-fetcher'), 
+                              user=os.environ.get('DATABASE_USERNAME', 'py-user'), 
+                              password=os.environ.get('DATABASE_PASWORD'), 
+                              host=os.environ.get('DATABASE_URL', '127.0.0.1'), 
+                              port= os.environ.get('DATABASE_PORT', '5433')) as conn:
+            with conn.cursor() as cur:
+                sql = 'SELECT playerId, teamAbbrev FROM players WHERE gamesPlayed > 0'
+                cur.execute(sql)
+                players = cur.fetchall()
+                for player in players:
+                    updatesql = 'UPDATE players set headshot = \'https://assets.nhle.com/mugs/nhl/20232024/' + player[1] + '/' + player[0] + '.png\''+ ' WHERE playerId = \'' + player[0] + '\''
+                    cur.execute(updatesql)
+                conn.commit()
+    except (psycopg2.DatabaseError, Exception) as error:
+        print(error)
+
+def insertteamsLogo():
+    try:
+        with psycopg2.connect(database=os.environ.get("DATABASE_URL", 'nhl-stats-fetcher'), 
+                              user=os.environ.get('DATABASE_USERNAME', 'py-user'), 
+                              password=os.environ.get('DATABASE_PASWORD'), 
+                              host=os.environ.get('DATABASE_URL', '127.0.0.1'), 
+                              port= os.environ.get('DATABASE_PORT', '5433')) as conn:
+            with conn.cursor() as cur:
+                sql = 'SELECT abbrev FROM teams'
+                cur.execute(sql)
+                teams = cur.fetchall()
+                for team in teams:
+                    updatesql = 'UPDATE teams set logo = \'https://assets.nhle.com/logos/nhl/svg/' + team[0] + '_light.svg\'' + ' WHERE abbrev = \'' + team[0] + '\''
+                    cur.execute(updatesql)
+                conn.commit()
+    except (psycopg2.DatabaseError, Exception) as error:
+        print(error)
+
+def updatePlayersAdditionalInfos():
+    try:
+        with psycopg2.connect(database=os.environ.get("DATABASE_URL", 'nhl-stats-fetcher'), 
+                              user=os.environ.get('DATABASE_USERNAME', 'py-user'), 
+                              password=os.environ.get('DATABASE_PASWORD'), 
+                              host=os.environ.get('DATABASE_URL', '127.0.0.1'), 
+                              port= os.environ.get('DATABASE_PORT', '5433')) as conn:
+            with conn.cursor() as cur:
+                sql = 'SELECT playerId FROM players where gamesPlayed > 0'
+                cur.execute(sql)
+                players = cur.fetchall()
+                today = datetime.today()
+                i = 1
+                for player in players:
+                    print(str(i) + '/' + str(len(players)))
+                    i += 1                    
+                    url = 'https://api-web.nhle.com/v1/player/' + player[0] + '/landing'
+                    response = requests.get(url)
+
+                    if response.status_code == 200:
+                        result = response.json()
+                        birthDate = datetime.strptime(result['birthDate'], "%Y-%m-%d")
+                        age = today.year - birthDate.year - ((today.month, today.day) < (birthDate.month, birthDate.day))
+                        height = result['heightInInches']
+                        weight = result['weightInPounds']
+                        birthCountry = result['birthCountry']
+                        updatesql = '''
+                            UPDATE players
+                            SET age = %s,
+                                height = %s,
+                                weight = %s,
+                                birthCountry = %s
+                            WHERE playerId = %s
+                        '''
+                        cur.execute(updatesql, (str(age), str(height), str(weight), birthCountry, str(player[0])))
+                    else:
+                        print("Failed to retrieve data. Status code:", response.status_code)
+                conn.commit()
+    except (psycopg2.DatabaseError, Exception) as error:
+        traceback.print_exc()
+
 if __name__ == '__main__':
-    generate_db()
-    insertTeams()
-    insertPlayers(datetime.now().year - 10, datetime.now().year)
-    insertGoalers(datetime.now().year - 10, datetime.now().year)
-    insertGames(datetime.now().year - 2, datetime.now().year)
-    insertGameLogs(datetime.now().year - 2, datetime.now().year)
-    insertGoalerGameLogs(datetime.now().year - 2, datetime.now().year)
+    #generate_db()
+    #insertTeams()
+    #insertPlayers(datetime.now().year - 10, datetime.now().year)
+    #insertGoalers(datetime.now().year - 10, datetime.now().year)
+    #insertGames(datetime.now().year - 2, datetime.now().year)
+    #insertGameLogs(datetime.now().year - 2, datetime.now().year)
+    #insertGoalerGameLogs(datetime.now().year - 2, datetime.now().year)
+    #insertPlayersHeadhots()
+    #insertteamsLogo()
+    updatePlayersAdditionalInfos()

@@ -1,8 +1,10 @@
 Initialization:
 - Add pool table and backfill from past 2 years
 - Add pool roaster table
-- Add players and teams logo url
 - Add roaster table
+- Reset season stats and pictures
+- add salary stats
+- goaler ages and heigth
 
 Automatizations:
 - Script to update games
