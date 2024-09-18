@@ -4,8 +4,8 @@ import traceback
 from nhlpy import NHLClient
 from datetime import datetime
 import requests
-from controllers.game import *
-from controllers.season import *
+from controllers.game import Game, get_season_games, fetch_strength_points, fetch_ot_goals
+from controllers.season import get_season_from_date
 
 client = NHLClient()
 playerIds = []
@@ -107,14 +107,19 @@ class Player:
             self.birthCountry,
         )
         
-    def update_infos(self, skater_stats = None):
-        currentSeason = get_current_season()
+    def update_infos(self, date: datetime, skater_stats = None):
+        currentSeason = get_season_from_date(date)
         
         if skater_stats is None:
-            skater_stats = client.stats.skater_stats_summary_simple(start_season=currentSeason, end_season=currentSeason, default_cayenne_exp='playerId=' + str(self.playerId))[0]
+            skater_stats = client.stats.skater_stats_summary_simple(start_season=currentSeason, end_season=currentSeason, default_cayenne_exp='playerId=' + str(self.playerId))
+            if len(skater_stats) > 0:
+                skater_stats = skater_stats[0]
+            else:
+                print('player not found ' + str(self.playerId))
+                return None
 
         self.playerId = skater_stats['playerId']
-        self.fullName = skater_stats['skaterFullname']
+        self.fullName = skater_stats['skaterFullName']
         self.goals = skater_stats['goals']
         self.assists = skater_stats['assists']
         self.evGoals = skater_stats['evGoals']
@@ -135,11 +140,11 @@ class Player:
         self.shootingPct = skater_stats['shootingPct']
         self.shootsCatches = skater_stats['shootsCatches']
         self.shots = skater_stats['shots']
-        self.teamAbbrev = skater_stats['teamAbbrevs'][len(skater_stats['teamAbbrevs']) - 3:], # keep the last 3 for most recent team
+        self.teamAbbrev = skater_stats['teamAbbrevs'][-3:] # keep the last 3 for most recent team
         self.timeOnIcePerGame = skater_stats['timeOnIcePerGame']
-        self.headshot = 'https://assets.nhle.com/mugs/nhl/' + currentSeason + '/' + self.playerId + '/' + self.teamAbbrev + '.png'
+        self.headshot = 'https://assets.nhle.com/mugs/nhl/' + str(currentSeason) + '/' + str(self.playerId) + '/' + str(self.teamAbbrev) + '.png'
         
-        url = 'https://api-web.nhle.com/v1/player/' + self.playerId + '/landing'
+        url = 'https://api-web.nhle.com/v1/player/' + str(self.playerId) + '/landing'
         response = requests.get(url)
 
         if response.status_code == 200:
@@ -169,7 +174,7 @@ def save_players_to_db(players, updateOnConflict=True):
                 if updateOnConflict:
                     
                     insert_sql = """
-                        INSERT INTO players values(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                        INSERT INTO players values(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                         ON CONFLICT (playerId) DO UPDATE
                             SET fullName = excluded.fullName,
                                 goals = excluded.goals,
@@ -198,14 +203,12 @@ def save_players_to_db(players, updateOnConflict=True):
                                 age = excluded.age,
                                 height = excluded.height,
                                 weight = excluded.weight,
-                                birthCountry = excluded.birthCountry,
-                        RETURNING *
+                                birthCountry = excluded.birthCountry
                     """
                 else:
                     insert_sql = """
-                        INSERT INTO players values(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                        INSERT INTO players values(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                         ON CONFLICT (playerId) DO NOTHING
-                        RETURNING *
                     """
                 print('Inserting ' + str(len(players)) + ' players')
                 cur.executemany(insert_sql, [player.values() for player in players])
@@ -213,7 +216,7 @@ def save_players_to_db(players, updateOnConflict=True):
     except (psycopg2.DatabaseError, Exception) as error:
         traceback.print_exc()
 
-def save_players_if_not_exists(playersIds):
+def save_players_if_not_exists(playersIds, gameDate = datetime.now()):
     try:
         with psycopg2.connect(
             database=os.environ.get("DATABASE_URL", "nhl-stats-fetcher"),
@@ -224,14 +227,16 @@ def save_players_if_not_exists(playersIds):
         ) as conn:
             with conn.cursor() as cur:
                 select_sql = """
-                    SELECT playerId from players
+                    SELECT playerId from players where playerId IN %s
                 """
-                cur.execute(select_sql)
+                strPlayersIds = [str(playerId) for playerId in playersIds]
+                cur.execute(select_sql, (tuple(strPlayersIds),))
                 saved_players = cur.fetchall()
                 saved_players = [player[0] for player in saved_players]
-                players_to_insert = [player for player in playersIds if player not in saved_players]
+                players_to_insert = [player for player in strPlayersIds if player not in saved_players]
                 
-                save_players_to_db([Player(playerId=player).update_infos() for player in players_to_insert])
+                if len(players_to_insert) > 0:
+                    save_players_to_db([Player(playerId=player).update_infos(gameDate) for player in players_to_insert])
                 
     except (psycopg2.DatabaseError, Exception) as error:
         traceback.print_exc()
@@ -283,7 +288,7 @@ class PlayerGameLog:
         self.opponentAbbrev = opponentAbbrev
         self.pim = pim
         self.toi = toi
-        self.gameTyp = gameType
+        self.gameType = gameType
 
     def values(self):
         return (
@@ -365,7 +370,6 @@ def save_player_gamelogs_to_db(playergamelogs):
                                             pim = excluded.pim, 
                                             toi = excluded.toi, 
                                             gameType = excluded.gameType
-                                    RETURNING *
                                 '''
                     print('Saving ' + str(len(playergamelogs)) + ' game logs')
                     cur.executemany(gameLogsSql, [playergamelog.values() for playergamelog in playergamelogs])
@@ -379,11 +383,11 @@ def fetch_player_log(playersBoxScore, game: Game, gameGoals, away: bool):
     for playerBoxScore in playersBoxScore:
         playerIds.append(playerBoxScore['playerId'])
         gamelogs.append(PlayerGameLog(
-            game.gameId + playerBoxScore['playerId'],
+            str(game.gameId) + str(playerBoxScore['playerId']),
             game.gameId,
             playerBoxScore['playerId'],
             game.awayTeamAbbrev if away else game.homeTeamAbbrev,
-            'R',
+            'R' if away else 'H',
             game.startTimeUTC,
             playerBoxScore['goals'],
             playerBoxScore['assists'],
@@ -403,5 +407,5 @@ def fetch_player_log(playersBoxScore, game: Game, gameGoals, away: bool):
             game.gameType,
         ))
     
-    save_players_if_not_exists(playerIds)
+    save_players_if_not_exists(playerIds, datetime.strptime(game.startTimeUTC, '%Y-%m-%dT%H:%M:%SZ'))
     return gamelogs

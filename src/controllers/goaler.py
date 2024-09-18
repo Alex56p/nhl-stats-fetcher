@@ -4,8 +4,8 @@ import traceback
 from nhlpy import NHLClient
 from datetime import datetime
 import requests
-from controllers.game import *
-from controllers.season import *
+from controllers.game import Game, get_season_games, fetch_strength_points
+from controllers.season import get_season_from_date
 
 client = NHLClient()
 playerIds = []
@@ -34,7 +34,12 @@ class Goaler:
         teamAbbrev=None,
         ties=None,
         timeOnIce=None,
-        wins=None,
+        wins=None,        
+        headshot = None,
+        age = None,
+        height = None,
+        weight = None,
+        birthCountry = None,
     ):
         self.playerId = playerId
         self.fullName = fullName
@@ -57,6 +62,12 @@ class Goaler:
         self.ties = ties
         self.timeOnIce = timeOnIce
         self.wins = wins
+        self.headshot = headshot
+        self.age = age
+        self.height = height
+        self.weight = weight
+        self.birthCountry = birthCountry
+
 
     def values(self):
         return (
@@ -81,17 +92,26 @@ class Goaler:
             self.ties,
             self.timeOnIce,
             self.wins,
+            self.headshot,
+            self.age,
+            self.height,
+            self.weight,
+            self.birthCountry,
         )
 
-    def update_infos(self, skater_stats=None):
-        currentSeason = get_current_season()
+    def update_infos(self, date: datetime, skater_stats=None):
+        season = get_season_from_date(date)
 
         if skater_stats is None:
             skater_stats = client.stats.goalie_stats_summary_simple(
-                start_season=currentSeason,
-                end_season=currentSeason,
+                start_season=season,
+                end_season=season,
                 default_cayenne_exp="playerId=" + str(self.playerId),
-            )[0]
+            )
+            if len(skater_stats) > 0:
+                skater_stats = skater_stats[0]
+            else:
+                print('Invalid goaler ' + str(self.playerId))
 
         self.playerId = skater_stats["playerId"]
         self.fullName = skater_stats["goalieFullName"]
@@ -116,18 +136,19 @@ class Goaler:
         self.ties = skater_stats["ties"]
         self.timeOnIce = skater_stats["timeOnIce"]
         self.wins = skater_stats["wins"]
+        self.headshot = 'https://assets.nhle.com/mugs/nhl/' + str(season) + '/' + str(self.playerId) + '/' + str(self.teamAbbrev) + '.png'
 
-        # url = "https://api-web.nhle.com/v1/player/" + self.playerId + "/landing"
-        # response = requests.get(url)
+        url = "https://api-web.nhle.com/v1/player/" + str(self.playerId) + "/landing"
+        response = requests.get(url)
 
-        # if response.status_code == 200:
-        #     result = response.json()
-        #     birthDate = datetime.strptime(result["birthDate"], "%Y-%m-%d")
-        #     today = datetime.now()
-        #     self.age = (today.year - birthDate.year - ((today.month, today.day) < (birthDate.month, birthDate.day)))
-        #     self.height = result["heightInInches"]
-        #     self.weight = result["weightInPounds"]
-        #     self.birthCountry = result["birthCountry"]
+        if response.status_code == 200:
+            result = response.json()
+            birthDate = datetime.strptime(result["birthDate"], "%Y-%m-%d")
+            today = datetime.now()
+            self.age = (today.year - birthDate.year - ((today.month, today.day) < (birthDate.month, birthDate.day)))
+            self.height = result["heightInInches"]
+            self.weight = result["weightInPounds"]
+            self.birthCountry = result["birthCountry"]
 
         return self
 
@@ -138,7 +159,7 @@ def save_goalers_to_db(goalers, updateOnConflict=True):
     
     try:
         with psycopg2.connect(
-            database=os.environ.get("DATABASE_URL", "nhl-stats-fetcher"),
+            database=os.environ.get("DATABASE_NAME", "nhl-stats-fetcher"),
             user=os.environ.get("DATABASE_USERNAME", "py-user"),
             password=os.environ.get("DATABASE_PASSWORD"),
             host=os.environ.get("DATABASE_URL", "127.0.0.1"),
@@ -148,7 +169,7 @@ def save_goalers_to_db(goalers, updateOnConflict=True):
                 if updateOnConflict:
 
                     insert_sql = """
-                        INSERT INTO goalers values(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) 
+                        INSERT INTO goalers values(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) 
                         ON CONFLICT (playerId) DO UPDATE
                             SET fullName = excluded.fullName,
                                 assists = excluded.assists,
@@ -170,11 +191,16 @@ def save_goalers_to_db(goalers, updateOnConflict=True):
                                 ties = excluded.ties,
                                 timeOnIce = excluded.timeOnIce,
                                 wins = excluded.wins,
+                                headshot = excluded.headshot,
+                                age = excluded.age,
+                                height = excluded.height,
+                                weight = excluded.weight,
+                                birthCountry = excluded.birthCountry
                         RETURNING *
                     """
                 else:
                     insert_sql = """
-                        INSERT INTO goalers values(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) 
+                        INSERT INTO goalers values(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) 
                         ON CONFLICT (playerId) DO NOTHING
                         RETURNING *
                     """
@@ -185,7 +211,7 @@ def save_goalers_to_db(goalers, updateOnConflict=True):
         traceback.print_exc()
 
 
-def save_goalers_if_not_exists(goalersIds):
+def save_goalers_if_not_exists(goalersIds, gameDate: datetime):
     try:
         with psycopg2.connect(
             database=os.environ.get("DATABASE_URL", "nhl-stats-fetcher"),
@@ -196,25 +222,21 @@ def save_goalers_if_not_exists(goalersIds):
         ) as conn:
             with conn.cursor() as cur:
                 select_sql = """
-                    SELECT playerId from goalers
+                    SELECT playerId from goalers where playerId in %s
                 """
-                cur.execute(select_sql)
+                strGoalersIds = [str(playerId) for playerId in goalersIds]
+                cur.execute(select_sql, (tuple(strGoalersIds),))
                 saved_goalers = cur.fetchall()
                 saved_goalers = [goaler[0] for goaler in saved_goalers]
                 goalers_to_insert = [
-                    goaler for goaler in goalersIds if goaler not in saved_goalers
+                    goaler for goaler in strGoalersIds if goaler not in saved_goalers
                 ]
 
-                save_goalers_to_db(
-                    [
-                        Goaler(playerId=goaler).update_infos()
-                        for goaler in goalers_to_insert
-                    ]
-                )
+                if len(goalers_to_insert) > 0:
+                    save_goalers_to_db([ Goaler(playerId=goaler).update_infos(gameDate) for goaler in goalers_to_insert ])
 
     except (psycopg2.DatabaseError, Exception) as error:
         traceback.print_exc()
-
 
 class GoalerGameLog:
     def __init__(
@@ -308,14 +330,10 @@ def save_goaler_gamelogs_to_db(goalergamelogs):
                                             opponentAbbrev = excluded.opponentAbbrev,
                                             pim = excluded.pim,
                                             toi = excluded.toi,
-                                            gameType = excluded.gameType,
-                                    RETURNING *
+                                            gameType = excluded.gameType
                                 """
                 print('Saving ' + str(len(goalergamelogs)) + ' goaler gamelogs')
-                cur.executemany(
-                    gameLogsSql,
-                    [goalergamelog.values() for goalergamelog in goalergamelogs],
-                )
+                cur.executemany(gameLogsSql, [goalergamelog.values() for goalergamelog in goalergamelogs])
                 print('Done.')
     except (psycopg2.DatabaseError, Exception) as error:
         traceback.print_exc()
@@ -324,29 +342,34 @@ def fetch_goaler_log(goalersBoxScore, game: Game, gameGoals, away: bool):
     gamelogs = []
     playerIds = []
     for goalerBoxScore in goalersBoxScore:
+        
+        # Don't add goalers that have not played.
+        if goalerBoxScore['toi'] == "00:00":
+            continue
+        
         playerIds.append(goalerBoxScore["playerId"])
         gamelogs.append(
             GoalerGameLog(
-                game.gameId + goalerBoxScore['playerId'],
+                str(game.gameId) + str(goalerBoxScore['playerId']),
                 game.gameId,
                 goalerBoxScore['playerId'],
                 game.awayTeamAbbrev if away else game.homeTeamAbbrev,
-                'R',
+                'R' if away else 'H',
                 game.startTimeUTC,
                 fetch_strength_points(goalerBoxScore['playerId'], gameGoals, 'all', True, False),
                 fetch_strength_points(goalerBoxScore['playerId'], gameGoals, 'all', False, True), 
-                goalerBoxScore['starter'] if 'starter' in goalerBoxScore else None,
+                1 if 'starter' in goalerBoxScore and goalerBoxScore['starter'] == 'true' else 0,
                 goalerBoxScore['decision'] if 'decision' in goalerBoxScore else '',
                 int(goalerBoxScore['saveShotsAgainst'].split('/')[1]),
                 goalerBoxScore['goalsAgainst'],
                 goalerBoxScore['savePctg'] if 'savePctg' in goalerBoxScore else 0,
                 1 if goalerBoxScore['goalsAgainst'] == 0 and 'decision' in goalerBoxScore and goalerBoxScore['decision'] == 'W' else 0,
-                game.homeTeamScore if away else game.awayTeamAbbrev,
+                game.homeTeamAbbrev if away else game.awayTeamAbbrev,
                 goalerBoxScore['pim'] if 'pim' in goalerBoxScore else None,
                 goalerBoxScore['toi'],
                 game.gameType
             )
         )
 
-    save_goalers_if_not_exists(playerIds)
+    save_goalers_if_not_exists(playerIds, datetime.strptime(game.startTimeUTC, '%Y-%m-%dT%H:%M:%SZ'))
     return gamelogs

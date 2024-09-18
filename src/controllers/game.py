@@ -130,7 +130,7 @@ def fetch_strength_points(playerId, gameGoals, strength, goals = True, assists =
                     ppp += 1
                 if assists:
                     for assist in goal['assists']:
-                        if assist['playerId']:
+                        if assist['playerId'] == playerId:
                             ppp += 1
     return ppp
 

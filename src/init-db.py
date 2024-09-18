@@ -80,6 +80,11 @@ def generate_db():
             ties INTEGER,
             timeOnIce NUMERIC,
             wins INTEGER,
+            headshot VARCHAR(1000),
+            age INTEGER,
+            height NUMERIC,
+            weight NUMERIC,
+            birthCountry VARCHAR(100),
             
             FOREIGN KEY (teamAbbrev)
             REFERENCES teams (abbrev)
