@@ -5,6 +5,7 @@ import json
 from nhlpy import NHLClient
 from datetime import datetime
 import traceback
+from controllers.pool import Pool, createPoolTable, insertPools
 
 
 def generate_db():
@@ -712,6 +713,24 @@ def updatePlayersAdditionalInfos():
     except (psycopg2.DatabaseError, Exception) as error:
         traceback.print_exc()
 
+def initPools():
+    createPoolTable()
+    
+    pools = [
+        Pool("2265320192020", 22653, "20192020", "No-Sleeve",9,4,1,4,70,738,328,1,1,0,0,0,0,2,0,0,1,1),
+        Pool("2265320202021",22653,"20202021","No-Sleeve",9,4,1,3,56,504,224,3,2,1,1,0.2,0.1,3,-1,0.1,1,1),
+        Pool("2265320212022", 22653, "20212022", "No-Sleeve",9,4,1,4,82,738,328,3,2,1,1,0.2,0.1,3,-1,0.1,1,1),
+        Pool("2265320222023", 22653, "20222023", "No-Sleeve", 9, 4, 1, 4, 82, 738, 328, 3,2,1,1,0.2,0.1,3,-1,0.1,1,1),
+        Pool("2265320232024", 22653, "20232024", "No-Sleeve", 9, 4, 1, 4, 82, 738, 328, 2,2,1,1,0.2,0.1,3,-1,0.1,1,1),
+        Pool("2265320242025", 22653, "20242025", "No-Sleeve", 9, 4, 1, 4, 82, 738, 328, 2,2,1,1,0.2,0.1,3,-1,0.1,1,1),
+        Pool("120415532920202021", 1204155329, "20202021", "Hurluberlus 2.0", 9, 4, 1, 5, 0, 0, 0, 2, 1,0,0,0,0,2,0,0,1,1),
+        Pool("120415532920212022", 1204155329, "20212022", "Hurluberlus 2.0", 9, 4, 1, 5,0,0,0,3,2,1,1,0.2,0.1,3,0,0,2,1),
+        Pool("120415532920222023", 1204155329, "20222023", "Hurluberlus 2.0", 9, 4, 1, 5,0,0,0,3,2,1,1,0.2,0.1,3,0,0,2,1),
+        Pool("120415532920232024", 1204155329, "20232024", "Hurluberlus 2.0", 9, 4, 1, 5,0,0,0,3,2,0,0,0.2,0.1,3,0,0.1,2,1)
+    ]
+    
+    insertPools(pools)
+
 if __name__ == '__main__':
     #generate_db()
     #insertTeams()
@@ -722,4 +741,5 @@ if __name__ == '__main__':
     #insertGoalerGameLogs(datetime.now().year - 2, datetime.now().year)
     #insertPlayersHeadhots()
     #insertteamsLogo()
-    updatePlayersAdditionalInfos()
+    #updatePlayersAdditionalInfos()
+    initPools()
